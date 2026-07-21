@@ -1,0 +1,16 @@
+{
+  "name": "covscout",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Find high-value Java test coverage gaps.",
+  "type": "module",
+  "bin": {
+    "covscout": "bin/covscout.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
