@@ -235,7 +235,7 @@ async function findLikelyUntestedPublicMethods(directory) {
     for (const match of text.matchAll(/\bpublic\s+(?:static\s+)?[\w<>\[\], ?]+\s+(\w+)\s*\([^;{}]*\)\s*(?:throws\s+[^{]+)?\{/g)) {
       const method = match[1];
       if (method === className || testText.includes(method.toLowerCase())) continue;
-      gaps.push({ file, className, method, reason: "No similarly named test method was found in src/test." });
+      gaps.push({ file: path.relative(directory, file).split(path.sep).join("/"), className, method, reason: "No similarly named test method was found in src/test." });
     }
   }
   return gaps;

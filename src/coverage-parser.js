@@ -1,19 +1,23 @@
+import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 // JaCoCo's report DTD defines report/package/class/method/counter and
 // report/package/sourcefile/line. Method counter elements carry the method's
 // aggregate LINE and BRANCH counters, so no source-range inference is needed.
 // See https://www.jacoco.org/jacoco/trunk/coverage/report.dtd
 const COUNTER_TYPES = new Set(["INSTRUCTION", "BRANCH", "LINE", "COMPLEXITY", "METHOD", "CLASS"]);
+const SKIPPED_DIRECTORIES = new Set([".git", ".gradle", "build", "target", "node_modules", "out"]);
+const SOURCE_FILE_SCAN_LIMIT = 5_000;
 
-export async function parseCoverageReport(coverage) {
+export async function parseCoverageReport(coverage, repositoryDirectory) {
   if (!coverage || typeof coverage !== "object") return unavailable("Coverage step returned no usable result.");
-  if (coverage.kind === "static-heuristic") return normalizeStaticHeuristic(coverage);
+  if (coverage.kind === "static-heuristic") return normalizeStaticHeuristic(coverage, repositoryDirectory);
   if (coverage.kind !== "jacoco-report") return unavailable(`Unsupported coverage result kind: ${String(coverage.kind)}.`);
   if (!coverage.reportPath) return unavailable("JaCoCo coverage result did not provide a report path.", coverage);
 
   try {
-    return parseJacocoXml(await readFile(coverage.reportPath, "utf8"), coverage);
+    return parseJacocoXml(await readFile(coverage.reportPath, "utf8"), coverage, repositoryDirectory);
   } catch (error) {
     return unavailable(`Unable to read JaCoCo XML report: ${error.message}`, coverage);
   }
@@ -34,18 +38,22 @@ export function formatParsedCoverageSummary(parsed) {
   return lines;
 }
 
-export function parseJacocoXml(xml, coverage = {}) {
+export function parseJacocoXml(xml, coverage = {}, repositoryDirectory) {
   try {
     const root = parseXml(xml);
     if (root.name !== "report") throw new Error(`Expected <report> root element, found <${root.name}>.`);
     validateJacocoSchema(root);
     const classes = [];
+    const warnings = [];
+    const resolver = createSourceFileResolver(repositoryDirectory);
     for (const packageNode of children(root, "package")) {
       const packageName = requiredAttribute(packageNode, "name");
       const sourceFiles = new Map(children(packageNode, "sourcefile").map((sourceFile) => [sourceFile.attributes.name, sourceFile]));
       for (const classNode of children(packageNode, "class")) {
         const internalName = requiredAttribute(classNode, "name");
         const sourceFile = classNode.attributes.sourcefilename ?? null;
+        const resolution = sourceFile ? resolver.resolve(sourcePath(packageName, sourceFile), internalName) : { sourceFile: null };
+        if (resolution.warning) warnings.push(resolution.warning);
         const methods = children(classNode, "method").map((methodNode) => ({
           name: requiredAttribute(methodNode, "name"),
           descriptor: requiredAttribute(methodNode, "desc"),
@@ -57,7 +65,7 @@ export function parseJacocoXml(xml, coverage = {}) {
           name: internalName.replaceAll("/", "."),
           internalName,
           packageName: packageName.replaceAll("/", "."),
-          sourceFile: sourceFile ? sourcePath(packageName, sourceFile) : null,
+          sourceFile: resolution.sourceFile,
           coverage: coverageFromCounters(children(classNode, "counter")),
           methods,
           heuristic: false,
@@ -73,7 +81,7 @@ export function parseJacocoXml(xml, coverage = {}) {
       confidence: coverage.confidence ?? "high",
       heuristic: false,
       status: "available",
-      warnings: [],
+      warnings,
       classes,
       summary: summarize(classes),
       reportPath: coverage.reportPath,
@@ -83,16 +91,20 @@ export function parseJacocoXml(xml, coverage = {}) {
   }
 }
 
-function normalizeStaticHeuristic(coverage) {
+function normalizeStaticHeuristic(coverage, repositoryDirectory) {
   const grouped = new Map();
+  const warnings = [coverage.reason ?? "Coverage data unavailable; using static heuristic fallback."];
+  const resolver = createSourceFileResolver(repositoryDirectory);
   for (const gap of Array.isArray(coverage.gaps) ? coverage.gaps : []) {
     if (!gap || typeof gap !== "object" || !gap.className || !gap.method) continue;
-    const key = `${gap.file ?? ""}\u0000${gap.className}`;
+    const resolution = resolver.resolve(gap.file, gap.className);
+    if (resolution.warning) warnings.push(resolution.warning);
+    const key = `${resolution.sourceFile ?? ""}\u0000${gap.className}`;
     if (!grouped.has(key)) grouped.set(key, {
       name: gap.className,
       internalName: null,
       packageName: null,
-      sourceFile: gap.file ?? null,
+      sourceFile: resolution.sourceFile,
       coverage: unknownCoverage(),
       methods: [],
       heuristic: true,
@@ -114,7 +126,7 @@ function normalizeStaticHeuristic(coverage) {
     confidence: coverage.confidence ?? "low",
     heuristic: true,
     status: "fallback",
-    warnings: [coverage.reason ?? "Coverage data unavailable; using static heuristic fallback."],
+    warnings,
     classes,
     summary: summarize(classes),
     reportPath: null,
@@ -173,6 +185,39 @@ function mergeMetrics(metrics) {
   return metric(available.reduce((sum, item) => sum + item.missed, 0), available.reduce((sum, item) => sum + item.covered, 0));
 }
 function sourcePath(packageName, filename) { return packageName ? `${packageName}/${filename}` : filename; }
+function createSourceFileResolver(repositoryDirectory) {
+  if (!repositoryDirectory) return { resolve: (_, className) => ({ sourceFile: null, warning: `Unable to resolve source file for ${className}: repository directory was not provided.` }) };
+  const files = [];
+  let truncated = false;
+  let scanError;
+  try {
+    const visit = (directory) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          if (!SKIPPED_DIRECTORIES.has(entry.name)) visit(path.join(directory, entry.name));
+        } else if (entry.isFile()) {
+          if (files.length >= SOURCE_FILE_SCAN_LIMIT) { truncated = true; return; }
+          files.push(normalizePath(path.relative(repositoryDirectory, path.join(directory, entry.name))));
+        }
+        if (truncated) return;
+      }
+    };
+    visit(repositoryDirectory);
+  } catch (error) { scanError = error; }
+  return {
+    resolve(expectedPath, className) {
+      if (!expectedPath) return { sourceFile: null };
+      if (scanError) return { sourceFile: null, warning: `Unable to resolve source file for ${className} (expected ${expectedPath}): ${scanError.message}` };
+      if (truncated) return { sourceFile: null, warning: `Unable to resolve source file for ${className} (expected ${expectedPath}): repository scan reached the ${SOURCE_FILE_SCAN_LIMIT}-file cap.` };
+      const expected = normalizePath(path.isAbsolute(expectedPath) ? path.relative(repositoryDirectory, expectedPath) : expectedPath);
+      const matches = files.filter((file) => file === expected || file.endsWith(`/${expected}`));
+      if (matches.length === 1) return { sourceFile: matches[0] };
+      if (matches.length === 0) return { sourceFile: null, warning: `Unable to resolve source file for ${className}: expected ${expected}.` };
+      return { sourceFile: null, warning: `Ambiguous source file for ${className}: expected ${expected}; candidates: ${matches.join(", ")}.` };
+    },
+  };
+}
+function normalizePath(value) { return value.split(path.sep).join("/"); }
 function children(node, name) { return node.children.filter((child) => child.name === name); }
 function requiredAttribute(node, name) { if (!(name in node.attributes)) throw new Error(`<${node.name}> is missing required "${name}" attribute.`); return node.attributes[name]; }
 function requiredNumber(value, label) { const number = Number(value); if (!Number.isSafeInteger(number) || number < 0) throw new Error(`Invalid ${label} counter value "${value}".`); return number; }

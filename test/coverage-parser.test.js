@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,11 +17,52 @@ test("parses JaCoCo's class, method, line, and branch counters", () => {
   assert.deepEqual(parsed.summary.line, { missed: 1, covered: 2, total: 3, percentage: 2 / 3 });
 });
 
+test("resolves JaCoCo source files to repository-relative paths", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "covscout-parser-"));
+  try {
+    const source = path.join(directory, "src/main/java/demo/Greeting.java");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "class Greeting {}\n");
+    const parsed = parseJacocoXml(REPORT, { confidence: "high" }, directory);
+    assert.equal(parsed.classes[0].sourceFile, "src/main/java/demo/Greeting.java");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("warns and leaves sourceFile null when a JaCoCo source file cannot be found", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "covscout-parser-"));
+  try {
+    const parsed = parseJacocoXml(REPORT, { confidence: "high" }, directory);
+    assert.equal(parsed.classes[0].sourceFile, null);
+    assert.match(parsed.warnings[0], /demo\/Greeting.*expected demo\/Greeting\.java/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("warns and leaves sourceFile null when a JaCoCo source file is ambiguous", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "covscout-parser-"));
+  try {
+    const first = path.join(directory, "module-one/src/main/java/demo/Greeting.java");
+    const second = path.join(directory, "module-two/src/main/java/demo/Greeting.java");
+    await Promise.all([mkdir(path.dirname(first), { recursive: true }), mkdir(path.dirname(second), { recursive: true })]);
+    await Promise.all([writeFile(first, "class Greeting {}\n"), writeFile(second, "class Greeting {}\n")]);
+    const parsed = parseJacocoXml(REPORT, { confidence: "high" }, directory);
+    assert.equal(parsed.classes[0].sourceFile, null);
+    assert.match(parsed.warnings[0], /module-one\/src\/main\/java\/demo\/Greeting\.java/);
+    assert.match(parsed.warnings[0], /module-two\/src\/main\/java\/demo\/Greeting\.java/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("normalizes static heuristic gaps without inventing coverage", async () => {
-  const parsed = await parseCoverageReport({ kind: "static-heuristic", confidence: "low", reason: "Build failed.", gaps: [{ file: "src/main/java/demo/Greeting.java", className: "Greeting", method: "hello", reason: "No similarly named test method was found in src/test." }] });
-  assert.equal(parsed.source, "static-heuristic");
-  assert.equal(parsed.heuristic, true);
-  assert.equal(parsed.classes[0].methods[0].coverage.line.percentage, null);
+  const directory = await mkdtemp(path.join(os.tmpdir(), "covscout-parser-"));
+  try {
+    const source = path.join(directory, "src/main/java/demo/Greeting.java");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "class Greeting {}\n");
+    const parsed = await parseCoverageReport({ kind: "static-heuristic", confidence: "low", reason: "Build failed.", gaps: [{ file: source, className: "Greeting", method: "hello", reason: "No similarly named test method was found in src/test." }] }, directory);
+    assert.equal(parsed.source, "static-heuristic");
+    assert.equal(parsed.heuristic, true);
+    assert.equal(parsed.classes[0].sourceFile, "src/main/java/demo/Greeting.java");
+    assert.equal(parsed.classes[0].methods[0].coverage.line.percentage, null);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("returns explicit unavailable data for malformed JaCoCo XML", () => {

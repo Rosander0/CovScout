@@ -11,7 +11,7 @@ export async function intakeRepository(githubUrl) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "covscout-"));
   const destination = path.join(temporaryRoot, repositoryName);
   try {
-    await runGit(["clone", "--depth", "10", cloneUrl, destination]);
+    await runGit(["clone", "--depth", "300", cloneUrl, destination]);
     const detection = await detectBuildSystem(destination);
     return { repositoryName, ...detection, directory: destination };
   } catch (error) {

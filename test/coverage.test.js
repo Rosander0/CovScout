@@ -125,5 +125,6 @@ test("falls back loudly to static heuristics after a failed build", async () => 
     assert.match(result.reason, /exited with code 1/);
     assert.match(result.outputTail, /JDK 21 is required/);
     assert.deepEqual(result.gaps.map((gap) => gap.method), ["uncovered"]);
+    assert.deepEqual(result.gaps.map((gap) => gap.file), ["src/main/java/demo/Widget.java"]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
