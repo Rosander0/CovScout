@@ -24,6 +24,11 @@ function successfulPipeline(directory) {
     formatChurnSummary: () => [],
     rankCoverageGaps: () => ({ ranked: [], unrankable: [], totalCandidates: 0, topN: 5 }),
     formatRankSummary: () => [],
+    generateTestStubs: () => ({ stubs: [], skippedClasses: [] }),
+    formatStubSummary: () => [],
+    outputRootForRepository: () => "unused-output-root",
+    writeOutput: async () => ({ outputRoot: "unused-output-root", writtenFiles: [], skipped: [], failures: [] }),
+    formatOutputSummary: () => [],
   };
 }
 
@@ -51,4 +56,24 @@ test("removes the temporary clone when a later pipeline stage throws", async () 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("--history prints saved history without invoking repository intake", async () => {
+  let intakeCalled = false;
+  const printed = [];
+  const originalLog = console.log;
+  console.log = (line) => { printed.push(line); };
+  try {
+    const exitCode = await main(["--history", "https://github.com/owner/repository.git"], {
+      intakeRepository: async () => { intakeCalled = true; },
+      parseGitHubUrl: () => ({ repositoryName: "repository" }),
+      outputRootForRepository: (name) => `history-root/${name}`,
+      readRunHistory: async ({ outputRoot }) => ({ status: "found", content: `### Run saved at ${outputRoot}` }),
+    });
+    assert.equal(exitCode, 0);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(intakeCalled, false);
+  assert.deepEqual(printed, ["### Run saved at history-root/repository"]);
 });
