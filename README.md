@@ -1,20 +1,29 @@
 # covscout
 
 `covscout` is a CLI tool that, given a GitHub repository URL, finds the
-highest-value test coverage gaps in a Java (Maven/Gradle) project.
-"Highest-value" is meant to combine low coverage with high change
-frequency, not just raw coverage percentage — see the full pipeline
-design below.
+highest-value test coverage gaps in a Java (Maven/Gradle) project and
+generates draft JUnit 5 test stubs for them. "Highest-value" combines
+low coverage with high change frequency, not just raw coverage
+percentage — see the scoring formula below.
 
 ```
 covscout <github-url>
+covscout --history <github-url>
 ```
 
-## What's implemented and proven right now
+Requires Node.js 20+. Not published to npm — clone and run directly
+(`node bin/covscout.js <github-url>`) or `npm link` locally for a
+`covscout` binary.
 
-This submission implements **Stages 1–3** of the full pipeline end to
-end, with both the happy path and the failure/fallback path proven
-against real public repositories:
+Started as my submission to OpenAI's Build Week hackathon, built with
+OpenAI Codex against the `AGENTS.md` spec in this repo; I've continued
+building on it since as a personal project.
+
+## Status: full 7-stage pipeline, implemented and tested
+
+Every stage from `AGENTS.md`'s pipeline design is implemented, wired
+together end to end in `bin/covscout.js`, and covered by the test
+suite (68 tests, `npm test`):
 
 1. **Repository intake and build-system detection** — clones the repo,
    detects Maven vs. Gradle from the actual build file content, and
@@ -32,8 +41,33 @@ against real public repositories:
    per-class, per-method line and branch coverage, following JaCoCo's
    actual report schema. Normalizes the static-heuristic fallback into
    the same output shape, with unknown coverage values kept explicitly
-   unknown (never invented) so a later ranking stage can't
-   accidentally treat a guess as a measurement.
+   unknown (never invented) so ranking can't accidentally treat a
+   guess as a measurement.
+4. **Git churn analysis** — runs `git log` bounded to the last ~100
+   commits or six months (whichever is smaller), maps changed files to
+   the classes coverage already knows about, and reports how many
+   files actually got churn data versus how many didn't. Missing or
+   unparseable git history degrades to an explicit `unavailable`
+   status rather than a silent zero.
+5. **Coverage-gap ranking** — combines coverage and churn into one
+   inspectable score: `(1 - line coverage) * ln(1 + commit count)`
+   when both are measured, falling back to whichever single signal is
+   available (and marking the result `partially-known`) when only one
+   is. The formula is printed alongside every ranked entry, not hidden
+   behind a black-box number.
+6. **JUnit 5 test stub generation** — for the top-ranked gaps, emits
+   `@Test` methods (`org.junit.jupiter.api`) for methods with
+   confirmed 0% line coverage or a static-heuristic gap, each with a
+   `fail("Not implemented")` placeholder and a `// TODO` explaining
+   what's unverified. Constructors are never stubbed, and methods with
+   only partial or unknown coverage are skipped rather than guessed
+   at, with the skip reason reported.
+7. **Output: markdown report + stub files + run history** — writes
+   `covscout-output/<repo>/REPORT.md` (every stage's summary, plus
+   stub path resolution), the generated `*StubTest.java` files, and
+   appends a run entry to `HISTORY.md` (capped at the 20 most recent
+   runs). `covscout --history <github-url>` reads back that history
+   without re-running the pipeline.
 
 ### Proven happy path (real JaCoCo XML)
 
@@ -70,16 +104,19 @@ Classes: 157
 Methods: 532
 ```
 
-Both paths run through the real CLI end to end — not mocked.
+Both paths run through the real CLI end to end — not mocked, and both
+now continue through churn analysis, ranking, stub generation, and
+report output rather than stopping at coverage parsing.
 
-## Designed but not yet implemented
+## Explicit non-goals (from `AGENTS.md`)
 
-Stages 4–7 of the pipeline (git churn analysis, combined
-coverage+churn ranking, JUnit 5 test stub generation, and the final
-markdown report) are fully specified in `AGENTS.md` but were not built
-in this submission window. We prioritized a smaller set of stages that
-are genuinely complete and verified over a larger set that would have
-been untested by the deadline.
+- Java/Maven/Gradle only — no other language ecosystems.
+- No auto-commit, auto-branch, or auto-opened PRs. Everything lands on
+  disk under `covscout-output/` for human review.
+- No guarantee of generated test correctness — stubs are a starting
+  point, not finished tests.
+- No web UI. CLI + markdown report + test files on disk is the full
+  scope.
 
 ## A note on the debugging process
 
