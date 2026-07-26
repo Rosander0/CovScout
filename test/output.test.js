@@ -13,6 +13,10 @@ test("writes all resolved stubs and a report built from stage summaries", async 
     outputRoot: root,
     mkdir: async () => {},
     writeFile: async (...args) => { writes.push(args); },
+    resolvePaths: (stubs, outputRoot) => [
+      { className: stubs[0].className, absolutePath: path.join(outputRoot, "demo", "WidgetStubTest.java") },
+      { className: stubs[1].className, absolutePath: path.join(outputRoot, "FlatStubTest.java") },
+    ],
   });
 
   assert.deepEqual(writes.slice(0, 2).map(([file, source]) => [file, source]), [
@@ -40,6 +44,27 @@ test("skips an exhausted collision while writing remaining stubs and the report"
   assert.equal(writes.some(([file]) => /OpenStubTest/.test(file)), true);
   assert.equal(writes.some(([file]) => /REPORT\.md$/.test(file)), true);
   assert.match(result.skipped[0].reason, /No free fallback/);
+});
+
+test("records only successfully written stubs in run history", async () => {
+  const files = new Map();
+  const readFile = async (file) => {
+    if (!files.has(file)) { const error = new Error("missing"); error.code = "ENOENT"; throw error; }
+    return files.get(file);
+  };
+  const writeFile = async (file, content) => { files.set(file, content); };
+  const result = await writeOutput({}, { stubs: [stub("demo.Blocked", "demo", "blocked"), stub("demo.Open", "demo", "open")] }, summaries, {
+    outputRoot: root, mkdir: async () => {}, readFile, writeFile,
+    resolvePaths: (stubs, outputRoot) => [
+      { className: stubs[0].className, intendedAbsolutePath: path.join(outputRoot, "demo", "BlockedStubTest.java"), absolutePath: null, collisionReason: "No free fallback was found." },
+      { className: stubs[1].className, absolutePath: path.join(outputRoot, "demo", "OpenStubTest.java") },
+    ],
+    historyEntry: { stubsWritten: 2, skippedCount: 0 },
+  });
+
+  assert.equal(result.writtenFiles.length - 1, 1);
+  assert.match(files.get(result.historyPath), /Stubs written: 1/);
+  assert.doesNotMatch(files.get(result.historyPath), /Stubs written: 2/);
 });
 
 test("continues after an individual stub write failure and reports its error", async () => {

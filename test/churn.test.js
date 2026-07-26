@@ -48,7 +48,6 @@ test("measures commit touches by coverage sourceFile, including confirmed zero-t
     ]);
     assert.equal(churn.window, "available-history");
     assert.match(formatChurnSummary(churn).join("\n"), /only 2 commits available/);
-    assert.match(formatChurnSummary(churn).join("\n"), /Files with churn data: 3\/3/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

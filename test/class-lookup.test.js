@@ -28,6 +28,10 @@ test("derives dotted packages from conventional main and test Java source roots"
   assert.equal(derivePackageName("src/test/java/demo/support/WidgetTest.java"), "demo.support");
 });
 
+test("returns an empty string for a confirmed default package", () => {
+  assert.equal(derivePackageName("src/main/java/Widget.java"), "");
+});
+
 test("returns null rather than guessing for absent or malformed Java source paths", () => {
   assert.equal(derivePackageName("lib/demo/Widget.java"), null);
   assert.equal(derivePackageName(""), null);

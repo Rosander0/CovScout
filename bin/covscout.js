@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { rm } from "node:fs/promises";
+import { rm as filesystemRm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { intakeRepository } from "../src/intake.js";
@@ -34,6 +34,7 @@ const defaultDependencies = {
   formatOutputSummary,
   readRunHistory,
   parseGitHubUrl,
+  rm: filesystemRm,
   outputRootForRepository: (repositoryName) => path.join(process.cwd(), "covscout-output", repositoryName),
 };
 
@@ -98,7 +99,9 @@ export async function main(arguments_, dependencies = defaultDependencies) {
     for (const line of pipeline.formatOutputSummary(output)) console.log(line);
     return 0;
   } finally {
-    await rm(path.dirname(result.directory), { recursive: true, force: true }).catch(() => {});
+    await pipeline.rm(path.dirname(result.directory), { recursive: true, force: true }).catch((error) => {
+      console.error(`covscout: failed to remove temporary clone at ${path.dirname(result.directory)}: ${error.message}`);
+    });
   }
 }
 

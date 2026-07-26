@@ -14,6 +14,9 @@ export function joinRankedClasses(rankedEntries, classes) {
 
 // This deliberately recognizes only the conventional Java source-root marker.
 // It parses an already-resolved repository-relative path; it does not search disk.
+// An empty string confirms the default (no-subpackage) package, while null means
+// the source-root marker could not be found. Callers currently treat both
+// identically by design, unless a future need arises to distinguish them.
 export function derivePackageName(sourceFile) {
   if (typeof sourceFile !== "string" || !sourceFile.trim()) return null;
 

@@ -191,6 +191,8 @@ function createSourceFileResolver(repositoryDirectory) {
   let truncated = false;
   let scanError;
   try {
+    // This scan is synchronous and blocks the event loop for its duration; raising
+    // SOURCE_FILE_SCAN_LIMIT increases that blocking cost proportionally.
     const visit = (directory) => {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         if (entry.isDirectory()) {

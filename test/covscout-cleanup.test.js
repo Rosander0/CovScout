@@ -58,6 +58,23 @@ test("removes the temporary clone when a later pipeline stage throws", async () 
   }
 });
 
+test("reports a temporary clone cleanup failure without changing the pipeline result", async () => {
+  const { root, directory } = await temporaryClone();
+  const errors = [];
+  const originalError = console.error;
+  console.error = (line) => { errors.push(line); };
+  try {
+    const pipeline = successfulPipeline(directory);
+    pipeline.rm = async () => { throw new Error("cleanup permission denied"); };
+    assert.equal(await main(["https://github.com/owner/repository.git"], pipeline), 0);
+  } finally {
+    console.error = originalError;
+    await rm(root, { recursive: true, force: true });
+  }
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /cleanup permission denied/);
+});
+
 test("--history prints saved history without invoking repository intake", async () => {
   let intakeCalled = false;
   const printed = [];

@@ -65,7 +65,6 @@ export function formatChurnSummary(churnResult_) {
     `Churn status: ${churnResult_.status ?? "unavailable"}`,
     `Churn window: ${churnResult_.window ?? "unavailable"}`,
     `Commits analyzed: ${churnResult_.commitsAnalyzed ?? 0}`,
-    `Files with churn data: ${churnResult_.filter((file) => file.commitCount !== null).length}/${churnResult_.length}`,
   ];
   for (const warning of churnResult_.warnings ?? []) lines.push(`WARNING: ${warning}`);
   return lines;

@@ -50,6 +50,7 @@ export async function writeOutput(rankedResult, stubResult, stageSummaries, {
       });
     }
   }
+  const stubsActuallyWritten = result.writtenFiles.length;
 
   const reportPath = path.join(outputRoot, "REPORT.md");
   try {
@@ -61,6 +62,7 @@ export async function writeOutput(rankedResult, stubResult, stageSummaries, {
   try {
     result.historyPath = await appendRunHistory({
       ...(historyEntry ?? {}),
+      stubsWritten: stubsActuallyWritten,
       skippedCount: (historyEntry?.skippedCount ?? 0) + result.skipped.length,
     }, { outputRoot, readFile, writeFile });
   } catch (error) {
