@@ -138,6 +138,22 @@ test("preserves score order even when a fallback to ineligible candidates is req
   assert.equal(result.bumpedForNoStubs.length, 0);
 });
 
+test("does not over-select or miscount when two classes share one sourceFile (nested/inner classes)", () => {
+  const shared = "http/RetrofitDemo.java";
+  const outer = { name: "http.RetrofitDemo", sourceFile: shared, heuristic: false,
+    coverage: { line: { percentage: 0.95 } }, methods: [{ name: "run", coverage: { line: { percentage: 0.95 } } }] };
+  const nested = { name: "http.RetrofitDemo$PageClient", sourceFile: shared, heuristic: false,
+    coverage: { line: { percentage: null } }, methods: [] };
+  const other1 = measuredClass("demo.A", "demo/A.java", 0.6);
+  const other2 = measuredClass("demo.B", "demo/B.java", 0.5);
+  const other3 = measuredClass("demo.C", "demo/C.java", 0.4);
+  const classes = [outer, nested, other1, other2, other3];
+  const churn = classes.map((entry) => ({ sourceFile: entry.sourceFile, commitCount: 3 }));
+  const result = rankCoverageGaps(classes, churn, { topN: 5 });
+  assert.equal(result.ranked.length, 5);
+  assert.equal(new Set(result.ranked.map((entry) => entry.name)).size, 5);
+});
+
 test("bumps a higher-scoring class with no stubbable methods for the next eligible one", () => {
   // 50% coverage but every method individually has partial coverage —
   // scores high, but stub generation can never produce a stub for it.

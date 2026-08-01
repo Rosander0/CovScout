@@ -31,16 +31,22 @@ export function classifyMethod(method, heuristic) {
 }
 
 // Joins Stage 5's summary entries back to Stage 3's full class records.
+// Keyed by name+sourceFile, not sourceFile alone: a single .java file can
+// declare multiple classes (a top-level class plus nested/inner classes),
+// so two different ranked entries can share one sourceFile. Keying on
+// sourceFile alone let the second class silently overwrite the first in the
+// lookup map, joining unrelated ranked entries to the wrong class record.
 export function joinRankedClasses(rankedEntries, classes) {
-  const classesBySourceFile = new Map(
+  const joinKey = (name, sourceFile) => `${sourceFile ?? ""}::${name ?? ""}`;
+  const classesByKey = new Map(
     (Array.isArray(classes) ? classes : [])
       .filter((candidate) => candidate && typeof candidate === "object" && typeof candidate.sourceFile === "string")
-      .map((candidate) => [candidate.sourceFile, candidate]),
+      .map((candidate) => [joinKey(candidate.name, candidate.sourceFile), candidate]),
   );
 
   return (Array.isArray(rankedEntries) ? rankedEntries : []).map((ranked) => ({
     ranked,
-    class: classesBySourceFile.get(ranked?.sourceFile) ?? null,
+    class: classesByKey.get(joinKey(ranked?.name, ranked?.sourceFile)) ?? null,
   }));
 }
 

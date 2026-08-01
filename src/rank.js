@@ -71,19 +71,22 @@ export function rankCoverageGaps(classes, churnResult, options = {}) {
   // Decide WHICH classes make the cut preferring stub-eligible ones, but keep
   // the original score-sorted order for how they're displayed — choosing the
   // set and choosing the order are two different steps.
+  // NOTE: keyed by object identity, not sourceFile — a single .java file can
+  // hold multiple classes (nested/inner classes), so sourceFile is not unique
+  // per candidate and using it as a Set key caused both under-counting and
+  // over-selection.
   const naiveTopN = ranked.slice(0, topN);
   const eligible = ranked.filter((entry) => entry.stubEligible);
   const ineligible = ranked.filter((entry) => !entry.stubEligible);
-  const chosenSourceFiles = new Set(eligible.slice(0, topN).map((entry) => entry.sourceFile));
-  if (chosenSourceFiles.size < topN) {
+  const chosen = new Set(eligible.slice(0, topN));
+  if (chosen.size < topN) {
     for (const entry of ineligible) {
-      if (chosenSourceFiles.size >= topN) break;
-      chosenSourceFiles.add(entry.sourceFile);
+      if (chosen.size >= topN) break;
+      chosen.add(entry);
     }
   }
-  const selected = ranked.filter((entry) => chosenSourceFiles.has(entry.sourceFile));
-  const selectedSourceFiles = new Set(selected.map((entry) => entry.sourceFile));
-  const bumpedForNoStubs = naiveTopN.filter((entry) => !entry.stubEligible && !selectedSourceFiles.has(entry.sourceFile));
+  const selected = ranked.filter((entry) => chosen.has(entry));
+  const bumpedForNoStubs = naiveTopN.filter((entry) => !entry.stubEligible && !chosen.has(entry));
 
   return {
     ranked: selected,
