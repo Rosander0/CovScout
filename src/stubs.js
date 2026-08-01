@@ -1,4 +1,4 @@
-import { derivePackageName, joinRankedClasses } from "./class-lookup.js";
+import { classifyMethods, derivePackageName, joinRankedClasses } from "./class-lookup.js";
 
 export function generateTestStubs(rankedResult, classes, options = {}) {
   void options;
@@ -60,33 +60,6 @@ export function formatStubSummary(stubResult) {
     for (const method of skippedClass.methods ?? []) lines.push(`  Skipped ${method.name}: ${method.reason}`);
   }
   return lines;
-}
-
-function classifyMethods(classRecord) {
-  const methods = Array.isArray(classRecord.methods) ? classRecord.methods : [];
-  return methods.map((method) => classifyMethod(method, classRecord.heuristic === true));
-}
-
-function classifyMethod(method, heuristic) {
-  const name = typeof method?.name === "string" ? method.name : "Unnamed method";
-  if (name === "<init>") return { name, status: "skipped", reason: "Constructors are not stubbed." };
-  if (heuristic) {
-    return {
-      name,
-      status: "stubbed",
-      reason: typeof method?.gapReason === "string" ? method.gapReason : "Static analysis identified a likely untested public method.",
-    };
-  }
-
-  const percentage = method?.coverage?.line?.percentage;
-  if (percentage === 0) return { name, status: "stubbed", reason: "Confirmed measured 0% line coverage." };
-  if (percentage === null || percentage === undefined) {
-    return { name, status: "skipped", reason: "Method line coverage is unknown, not confirmed untested." };
-  }
-  if (typeof percentage === "number" && percentage > 0 && percentage < 1) {
-    return { name, status: "skipped", reason: "Method has partial measured line coverage." };
-  }
-  return { name, status: "skipped", reason: "Method has measured line coverage and is not a confirmed zero-coverage gap." };
 }
 
 function noStubsReason(methods) {

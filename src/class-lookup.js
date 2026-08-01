@@ -1,3 +1,35 @@
+// Single source of truth for "is this method stubbable" — used by both the
+// ranking stage (to know whether a candidate can actually yield a stub before
+// committing a topN slot to it) and the stub-generation stage (to build the
+// stub source itself). Previously each stage computed this independently,
+// which let ranking pick classes that stub generation could never use.
+export function classifyMethods(classRecord) {
+  const methods = Array.isArray(classRecord?.methods) ? classRecord.methods : [];
+  return methods.map((method) => classifyMethod(method, classRecord?.heuristic === true));
+}
+
+export function classifyMethod(method, heuristic) {
+  const name = typeof method?.name === "string" ? method.name : "Unnamed method";
+  if (name === "<init>") return { name, status: "skipped", reason: "Constructors are not stubbed." };
+  if (heuristic) {
+    return {
+      name,
+      status: "stubbed",
+      reason: typeof method?.gapReason === "string" ? method.gapReason : "Static analysis identified a likely untested public method.",
+    };
+  }
+
+  const percentage = method?.coverage?.line?.percentage;
+  if (percentage === 0) return { name, status: "stubbed", reason: "Confirmed measured 0% line coverage." };
+  if (percentage === null || percentage === undefined) {
+    return { name, status: "skipped", reason: "Method line coverage is unknown, not confirmed untested." };
+  }
+  if (typeof percentage === "number" && percentage > 0 && percentage < 1) {
+    return { name, status: "skipped", reason: "Method has partial measured line coverage." };
+  }
+  return { name, status: "skipped", reason: "Method has measured line coverage and is not a confirmed zero-coverage gap." };
+}
+
 // Joins Stage 5's summary entries back to Stage 3's full class records.
 export function joinRankedClasses(rankedEntries, classes) {
   const classesBySourceFile = new Map(

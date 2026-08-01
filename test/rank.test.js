@@ -106,10 +106,103 @@ test("applies topN after status-tiered ordering", () => {
   assert.equal(result.totalCandidates, 4);
 });
 
+test("preserves score order even when a fallback to ineligible candidates is required", () => {
+  // Only 2 of these 4 are stub-eligible, so topN=4 must fall back to the
+  // 2 ineligible ones — but the final list should still read in score order,
+  // not "eligible first, then whatever got appended".
+  const deadEndHigh = {
+    name: "demo.DeadEndHigh", sourceFile: "demo/DeadEndHigh.java", heuristic: false,
+    coverage: { line: { percentage: 0.5 } },
+    methods: [{ name: "half", coverage: { line: { percentage: 0.5 } } }],
+  };
+  const usableMid = {
+    name: "demo.UsableMid", sourceFile: "demo/UsableMid.java", heuristic: false,
+    coverage: { line: { percentage: 0.7 } },
+    methods: [{ name: "untested", coverage: { line: { percentage: 0 } } }],
+  };
+  const usableLow = {
+    name: "demo.UsableLow", sourceFile: "demo/UsableLow.java", heuristic: false,
+    coverage: { line: { percentage: 0.9 } },
+    methods: [{ name: "untested", coverage: { line: { percentage: 0 } } }],
+  };
+  const deadEndLow = {
+    name: "demo.DeadEndLow", sourceFile: "demo/DeadEndLow.java", heuristic: false,
+    coverage: { line: { percentage: 0.95 } },
+    methods: [{ name: "half", coverage: { line: { percentage: 0.5 } } }],
+  };
+  const classes = [deadEndHigh, usableMid, usableLow, deadEndLow];
+  const churn = classes.map((entry) => ({ sourceFile: entry.sourceFile, commitCount: 2 }));
+  const result = rankCoverageGaps(classes, churn, { topN: 4 });
+  // Score order (highest gap first): DeadEndHigh > UsableMid > UsableLow > DeadEndLow.
+  assert.deepEqual(result.ranked.map((entry) => entry.name), ["demo.DeadEndHigh", "demo.UsableMid", "demo.UsableLow", "demo.DeadEndLow"]);
+  assert.equal(result.bumpedForNoStubs.length, 0);
+});
+
+test("bumps a higher-scoring class with no stubbable methods for the next eligible one", () => {
+  // 50% coverage but every method individually has partial coverage —
+  // scores high, but stub generation can never produce a stub for it.
+  const deadEnd = {
+    name: "demo.DeadEnd", sourceFile: "demo/DeadEnd.java", heuristic: false,
+    coverage: { line: { percentage: 0.5 } },
+    methods: [{ name: "half", coverage: { line: { percentage: 0.5 } } }],
+  };
+  const usable = {
+    name: "demo.Usable", sourceFile: "demo/Usable.java", heuristic: false,
+    coverage: { line: { percentage: 0.9 } },
+    methods: [{ name: "untested", coverage: { line: { percentage: 0 } } }],
+  };
+  const churn = [
+    { sourceFile: deadEnd.sourceFile, commitCount: 5 },
+    { sourceFile: usable.sourceFile, commitCount: 5 },
+  ];
+  const result = rankCoverageGaps([deadEnd, usable], churn, { topN: 1 });
+  assert.deepEqual(result.ranked.map((entry) => entry.name), ["demo.Usable"]);
+  assert.equal(result.bumpedForNoStubs.length, 1);
+  assert.equal(result.bumpedForNoStubs[0].name, "demo.DeadEnd");
+});
+
+test("falls back to a stub-ineligible candidate when there aren't enough eligible ones to fill topN", () => {
+  const deadEnd = {
+    name: "demo.OnlyOption", sourceFile: "demo/OnlyOption.java", heuristic: false,
+    coverage: { line: { percentage: 0.5 } },
+    methods: [{ name: "half", coverage: { line: { percentage: 0.5 } } }],
+  };
+  const result = rankCoverageGaps([deadEnd], [{ sourceFile: deadEnd.sourceFile, commitCount: 5 }], { topN: 3 });
+  assert.deepEqual(result.ranked.map((entry) => entry.name), ["demo.OnlyOption"]);
+  assert.equal(result.bumpedForNoStubs.length, 0);
+});
+
+test("does not penalize a class with no method data at all (methods: [])", () => {
+  const result = rankCoverageGaps([measuredClass("demo.NoMethodData", "demo/NoMethodData.java", 0.5)], [{ sourceFile: "demo/NoMethodData.java", commitCount: 5 }]);
+  assert.equal(result.ranked.length, 1);
+  assert.equal(result.ranked[0].stubEligible, true);
+  assert.equal(result.ranked[0].stubbableMethodCount, null);
+});
+
 test("formats formula inputs rather than only an opaque score", () => {
   const result = rankCoverageGaps([measuredClass("demo.Greeting", "demo/Greeting.java", 0.25)], [{ sourceFile: "demo/Greeting.java", commitCount: 3 }]);
   const summary = formatRankSummary(result).join("\n");
   assert.match(summary, /coverage: 25\.00%/);
   assert.match(summary, /churn: 3 commits/);
   assert.match(summary, /\(1 - line coverage\) \* ln\(1 \+ commits\)/);
+});
+
+test("prints a NOTE explaining a bumped no-stub candidate in the summary text", () => {
+  const deadEnd = {
+    name: "demo.DeadEnd", sourceFile: "demo/DeadEnd.java", heuristic: false,
+    coverage: { line: { percentage: 0.5 } },
+    methods: [{ name: "half", coverage: { line: { percentage: 0.5 } } }],
+  };
+  const usable = {
+    name: "demo.Usable", sourceFile: "demo/Usable.java", heuristic: false,
+    coverage: { line: { percentage: 0.9 } },
+    methods: [{ name: "untested", coverage: { line: { percentage: 0 } } }],
+  };
+  const churn = [
+    { sourceFile: deadEnd.sourceFile, commitCount: 5 },
+    { sourceFile: usable.sourceFile, commitCount: 5 },
+  ];
+  const result = rankCoverageGaps([deadEnd, usable], churn, { topN: 1 });
+  const summary = formatRankSummary(result).join("\n");
+  assert.match(summary, /NOTE: demo\.DeadEnd \[demo\/DeadEnd\.java\] scored higher .* no stubbable methods/);
 });

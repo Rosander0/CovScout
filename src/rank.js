@@ -1,3 +1,5 @@
+import { classifyMethods } from "./class-lookup.js";
+
 const DEFAULT_TOP_N = 5;
 
 // For measured coverage and churn: score = (1 - lineCoverage) * ln(1 + commits).
@@ -36,6 +38,13 @@ export function rankCoverageGaps(classes, churnResult, options = {}) {
     const coverageGap = measuredCoverage ? 1 - linePercentage : null;
     const churnSignal = hasChurnSignal ? Math.log1p(commitCount) : null;
     const score = scoreCandidate({ measuredCoverage, heuristic, hasChurnSignal, coverageGap, churnSignal });
+    // A class only counts against us here if we have positive evidence (real
+    // method records) that none of its methods are stubbable. With no method
+    // data at all we can't tell either way, so we don't penalize it — that
+    // keeps a coverage/churn-only view usable on its own.
+    const hasMethodData = Array.isArray(candidate.methods) && candidate.methods.length > 0;
+    const stubbableMethodCount = hasMethodData ? classifyMethods(candidate).filter((method) => method.status === "stubbed").length : null;
+    const stubEligible = !hasMethodData || stubbableMethodCount > 0;
     ranked.push({
       name,
       sourceFile: candidate.sourceFile,
@@ -47,6 +56,8 @@ export function rankCoverageGaps(classes, churnResult, options = {}) {
       churnSignal,
       status: measuredCoverage && hasChurnSignal ? "fully-known" : "partially-known",
       formula: formulaFor({ measuredCoverage, heuristic, hasChurnSignal }),
+      stubbableMethodCount,
+      stubEligible,
     });
   }
 
@@ -56,7 +67,32 @@ export function rankCoverageGaps(classes, churnResult, options = {}) {
     || left.name.localeCompare(right.name)
     || left.sourceFile.localeCompare(right.sourceFile));
   const totalCandidates = ranked.length;
-  return { ranked: ranked.slice(0, topN), unrankable, unrankableCount: unrankable.length, totalCandidates, topN };
+
+  // Decide WHICH classes make the cut preferring stub-eligible ones, but keep
+  // the original score-sorted order for how they're displayed — choosing the
+  // set and choosing the order are two different steps.
+  const naiveTopN = ranked.slice(0, topN);
+  const eligible = ranked.filter((entry) => entry.stubEligible);
+  const ineligible = ranked.filter((entry) => !entry.stubEligible);
+  const chosenSourceFiles = new Set(eligible.slice(0, topN).map((entry) => entry.sourceFile));
+  if (chosenSourceFiles.size < topN) {
+    for (const entry of ineligible) {
+      if (chosenSourceFiles.size >= topN) break;
+      chosenSourceFiles.add(entry.sourceFile);
+    }
+  }
+  const selected = ranked.filter((entry) => chosenSourceFiles.has(entry.sourceFile));
+  const selectedSourceFiles = new Set(selected.map((entry) => entry.sourceFile));
+  const bumpedForNoStubs = naiveTopN.filter((entry) => !entry.stubEligible && !selectedSourceFiles.has(entry.sourceFile));
+
+  return {
+    ranked: selected,
+    bumpedForNoStubs,
+    unrankable,
+    unrankableCount: unrankable.length,
+    totalCandidates,
+    topN,
+  };
 }
 
 export function formatRankSummary(rankResult) {
@@ -77,6 +113,8 @@ export function formatRankSummary(rankResult) {
     lines.push(`${entry.name} [${entry.sourceFile}] — ${coverage}; ${churn}; score: ${entry.score.toFixed(6)} = ${entry.formula} (${entry.status}).`);
   }
   for (const entry of unrankable) lines.push(`WARNING: Unrankable ${entry.name} [${entry.sourceFile ?? "unresolved source file"}]: ${entry.reason}`);
+  const bumped = Array.isArray(result.bumpedForNoStubs) ? result.bumpedForNoStubs : [];
+  for (const entry of bumped) lines.push(`NOTE: ${entry.name} [${entry.sourceFile}] scored higher (score: ${entry.score.toFixed(6)}) but has no stubbable methods; a lower-ranked, stub-eligible candidate was promoted in its place.`);
   return lines;
 }
 
