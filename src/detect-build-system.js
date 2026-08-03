@@ -4,7 +4,6 @@ import { IntakeError } from "./errors.js";
 
 const JAVA_SCAN_LIMIT = 5_000;
 const IGNORED_DIRECTORIES = new Set([".git", ".gradle", "build", "target", "node_modules", "out"]);
-
 export async function detectBuildSystem(repositoryDirectory, { scanLimit = JAVA_SCAN_LIMIT } = {}) {
   const rootEntries = await readdir(repositoryDirectory, { withFileTypes: true });
   const names = new Set(rootEntries.filter((entry) => entry.isFile()).map((entry) => entry.name));

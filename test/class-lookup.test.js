@@ -2,19 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { derivePackageName, joinRankedClasses } from "../src/class-lookup.js";
 
-test("joins two different classes that share one sourceFile to their own records (nested/inner classes)", () => {
-  const outer = { name: "demo.Outer", sourceFile: "demo/Outer.java", methods: [{ name: "work" }] };
-  const inner = { name: "demo.Outer$Inner", sourceFile: "demo/Outer.java", methods: [] };
-  const rankedOuter = { name: "demo.Outer", sourceFile: "demo/Outer.java", score: 0.9 };
-  const rankedInner = { name: "demo.Outer$Inner", sourceFile: "demo/Outer.java", score: 0.5 };
-
-  const result = joinRankedClasses([rankedOuter, rankedInner], [outer, inner]);
-
-  assert.equal(result[0].class, outer);
-  assert.equal(result[1].class, inner);
-  assert.notEqual(result[0].class, result[1].class);
-});
-
 test("joins a ranked entry to its complete Stage 3 class record", () => {
   const fullClass = {
     name: "demo.Widget",

@@ -14,7 +14,23 @@ import { formatIntakeSummary } from "../src/summary.js";
 import { parseGitHubUrl } from "../src/github-url.js";
 
 function usage() {
-  return "Usage: covscout <github-url>\n       covscout --history <github-url>";
+  return "Usage: covscout [--build-timeout <minutes>] <github-url>\n       covscout --history <github-url>";
+}
+
+// Pulls --build-timeout <minutes> out of the argument list wherever it
+// appears, returning the remaining positional args plus the parsed timeout
+// in ms (or null if the flag wasn't given, so callers fall back to
+// generateCoverageReport's own default).
+function extractBuildTimeout(arguments_) {
+  const index = arguments_.findIndex((argument) => argument === "--build-timeout");
+  if (index === -1) return { rest: arguments_, timeoutMs: null, error: null };
+  const raw = arguments_[index + 1];
+  const minutes = Number(raw);
+  if (raw === undefined || !Number.isFinite(minutes) || minutes <= 0) {
+    return { rest: arguments_, timeoutMs: null, error: `--build-timeout requires a positive number of minutes, got: ${raw ?? "(none)"}` };
+  }
+  const rest = [...arguments_.slice(0, index), ...arguments_.slice(index + 2)];
+  return { rest, timeoutMs: minutes * 60 * 1000, error: null };
 }
 
 const defaultDependencies = {
@@ -40,27 +56,33 @@ const defaultDependencies = {
 
 export async function main(arguments_, dependencies = defaultDependencies) {
   const pipeline = { ...defaultDependencies, ...dependencies };
-  const historyRequested = arguments_[0] === "--history" || arguments_[0] === "-H";
+  const { rest: argumentsWithoutTimeout, timeoutMs, error: timeoutError } = extractBuildTimeout(arguments_);
+  if (timeoutError) {
+    console.error(`covscout: ${timeoutError}`);
+    console.error(usage());
+    return 2;
+  }
+  const historyRequested = argumentsWithoutTimeout[0] === "--history" || argumentsWithoutTimeout[0] === "-H";
   if (historyRequested) {
-    if (arguments_.length !== 2) {
+    if (argumentsWithoutTimeout.length !== 2) {
       console.error(usage());
       return 2;
     }
-    const repository = pipeline.parseGitHubUrl(arguments_[1]);
+    const repository = pipeline.parseGitHubUrl(argumentsWithoutTimeout[1]);
     const history = await pipeline.readRunHistory({ outputRoot: pipeline.outputRootForRepository(repository.repositoryName) });
     console.log(history.status === "no-history-yet" ? `No run history yet for ${repository.repositoryName}.` : history.content);
     return 0;
   }
-  if (arguments_.length !== 1 || arguments_[0] === "--help" || arguments_[0] === "-h") {
+  if (argumentsWithoutTimeout.length !== 1 || argumentsWithoutTimeout[0] === "--help" || argumentsWithoutTimeout[0] === "-h") {
     console.error(usage());
-    return arguments_[0] === "--help" || arguments_[0] === "-h" ? 0 : 2;
+    return argumentsWithoutTimeout[0] === "--help" || argumentsWithoutTimeout[0] === "-h" ? 0 : 2;
   }
 
-  const result = await pipeline.intakeRepository(arguments_[0]);
+  const result = await pipeline.intakeRepository(argumentsWithoutTimeout[0]);
   try {
     const intakeSummary = pipeline.formatIntakeSummary(result);
     for (const line of intakeSummary) console.log(line);
-    const coverage = await pipeline.generateCoverageReport(result);
+    const coverage = await pipeline.generateCoverageReport(result, timeoutMs === null ? undefined : { timeoutMs });
     const coverageSummary = pipeline.formatCoverageSummary(coverage);
     for (const line of coverageSummary) console.log(line);
     const parsedCoverage = await pipeline.parseCoverageReport(coverage, result.directory);

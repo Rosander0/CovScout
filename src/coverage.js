@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+// 5 minutes was too short for real-world large repos: apache/commons-lang's
+// actual test suite takes ~9.5 minutes, and repos of that size/popularity are
+// exactly what new contributors are trying to audit with this tool. 15
+// minutes gives real headroom; --build-timeout overrides it per-run for
+// anything even larger.
+const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const OUTPUT_TAIL_LENGTH = 4_000;
 const SKIPPED_DIRECTORIES = new Set([".git", ".gradle", "build", "target", "node_modules", "out"]);
 
@@ -198,7 +203,7 @@ async function gradleBuildFilename(directory) {
   catch { return "build.gradle.kts"; }
 }
 
-function runCommand({ command, args, cwd, timeoutMs }) {
+export function runCommand({ command, args, cwd, timeoutMs, terminateTree = defaultTerminateTree }) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
@@ -215,12 +220,24 @@ function runCommand({ command, args, cwd, timeoutMs }) {
       clearTimeout(timer);
       resolve(result);
     };
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    // On Windows a .cmd is spawned via a shell wrapper (cmd.exe), and
+    // child.kill() only terminates that wrapper — the real Maven/JVM process
+    // underneath keeps running to completion, unmonitored, well past the
+    // timeout covscout already reported. taskkill /t kills the whole tree.
+    const timer = setTimeout(() => { timedOut = true; terminateTree(child); }, timeoutMs);
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("error", (error) => { stderr += error.message; finish({ code: 1, stdout, stderr, timedOut }); });
     child.on("close", (code) => finish({ code: code ?? 1, stdout, stderr, timedOut }));
   });
+}
+
+export function defaultTerminateTree(child, { platform = process.platform, spawnImpl = spawn } = {}) {
+  if (platform === "win32" && typeof child.pid === "number") {
+    spawnImpl("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+    return;
+  }
+  child.kill();
 }
 
 async function findLikelyUntestedPublicMethods(directory) {
